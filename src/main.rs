@@ -1,8 +1,10 @@
+use std::{fs, path::Path};
+
 use clap::{Args, Parser, Subcommand};
 
 const RELEASE_LIST_URL: &str = "https://download.blender.org/release/";
 const SYSTEM_EXT: &str = "linux-x64.tar.xz";
-const DEFAULT_INSTALL_LOC_LINUX: &str = "~/.local/share/blender_versions/";
+const DEFAULT_INSTALL_LOC_LINUX: &str = "/home/ethan/.local/share/blender_versions/";
 
 #[derive(Parser)]
 #[command(version = "0.1.0")]
@@ -34,7 +36,8 @@ struct ListArgs {
 
 #[derive(Args)]
 struct InstallArgs {
-
+    /// Versions formated such as "4.5", "Blender2.58", or "5.0"
+    version: String
 }
 
 #[derive(Args)]
@@ -50,6 +53,46 @@ struct RemoveArgs {
 #[derive(Args)]
 struct LocationArgs {
 
+}
+
+fn clean_up_major_version(input: &str) -> String {
+    let mut ret = input.to_owned();
+    if !ret.starts_with("Blender") {
+        ret = format!("Blender{}",ret);
+    }
+    if !ret.ends_with("/") {
+        ret.push('/');
+    }
+    ret
+}
+
+fn create_version_folder(cleaned_version: &str) -> Result<String,Box<dyn std::error::Error>> {
+    let base_path = DEFAULT_INSTALL_LOC_LINUX.to_owned();
+    if !Path::new(&base_path).exists() {
+        println!("Base path '{}' does not exist, creating",&base_path);
+        let create_base_dir_result = fs::create_dir_all(&base_path);
+        if create_base_dir_result.is_err() {
+            let err = create_base_dir_result.unwrap_err();
+            println!("Error creating base dir: {}",&err);
+            return Err(Box::new(err));
+        }
+    }
+    // Now check the actual install folder
+    let install_folder = format!("{base_path}{cleaned_version}");
+    println!("Checking for directory '{}'",&install_folder);
+    if !Path::new(&install_folder).exists() {
+        println!("Path does not exist, creating");
+        let create_install_folder_result = fs::create_dir_all(&install_folder);
+        if create_install_folder_result.is_err() {
+            let err = create_install_folder_result.unwrap_err();
+            println!("Error creating install dir: {}",&err);
+            return Err(Box::new(err));
+        }
+        println!("Created install directory '{}'",&install_folder);
+    } else {
+        println!("Install path already exists");
+    }
+    Ok(install_folder)
 }
 
 fn get_major_versions() -> Result<Vec<String>,Box<dyn std::error::Error>> {
@@ -104,8 +147,19 @@ fn main() {
         Commands::List(_list_args) => {
 
         },
-        Commands::Install(_install_args) => {
-
+        Commands::Install(install_args) => {
+            let version = clean_up_major_version(&install_args.version);
+            println!("Installing version '{}'",version);
+            let latest_release_url = get_latest_release_url(&version);
+            if latest_release_url.is_err() {
+                println!("Error getting version URL: {}",latest_release_url.unwrap_err());
+                return;
+            }
+            let _ = create_version_folder(&version);
+            let latest_release_url = latest_release_url.unwrap();
+            println!("Downloading '{}'",latest_release_url);
+            let dl_resp = reqwest::blocking::get(latest_release_url).expect("Found URL to be parsed right");
+            println!("Got response code '{}'",dl_resp.status());
         },
         Commands::Available(_available_args) => {
             let versions = get_major_versions();
