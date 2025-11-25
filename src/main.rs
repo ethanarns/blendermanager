@@ -1,6 +1,9 @@
-use std::{fs, path::Path};
+use std::{fs::{self, File}, io::{BufReader, Seek, Write}, path::Path};
 
 use clap::{Args, Parser, Subcommand};
+use tar::Archive;
+use flate2::read::GzDecoder;
+use xz2::bufread::XzDecoder;
 
 const RELEASE_LIST_URL: &str = "https://download.blender.org/release/";
 const SYSTEM_EXT: &str = "linux-x64.tar.xz";
@@ -77,22 +80,7 @@ fn create_version_folder(cleaned_version: &str) -> Result<String,Box<dyn std::er
             return Err(Box::new(err));
         }
     }
-    // Now check the actual install folder
-    let install_folder = format!("{base_path}{cleaned_version}");
-    println!("Checking for directory '{}'",&install_folder);
-    if !Path::new(&install_folder).exists() {
-        println!("Path does not exist, creating");
-        let create_install_folder_result = fs::create_dir_all(&install_folder);
-        if create_install_folder_result.is_err() {
-            let err = create_install_folder_result.unwrap_err();
-            println!("Error creating install dir: {}",&err);
-            return Err(Box::new(err));
-        }
-        println!("Created install directory '{}'",&install_folder);
-    } else {
-        println!("Install path already exists");
-    }
-    Ok(install_folder)
+    Ok(base_path)
 }
 
 fn get_major_versions() -> Result<Vec<String>,Box<dyn std::error::Error>> {
@@ -155,11 +143,37 @@ fn main() {
                 println!("Error getting version URL: {}",latest_release_url.unwrap_err());
                 return;
             }
-            let _ = create_version_folder(&version);
+            let install_folder = create_version_folder(&version).expect("Install folder to be created");
             let latest_release_url = latest_release_url.unwrap();
-            println!("Downloading '{}'",latest_release_url);
-            let dl_resp = reqwest::blocking::get(latest_release_url).expect("Found URL to be parsed right");
+            println!("Connecting to '{}'",latest_release_url);
+            let dl_resp = reqwest::blocking::get(&latest_release_url).expect("Found URL to be parsed right");
             println!("Got response code '{}'",dl_resp.status());
+            // Create the file
+            let filename = latest_release_url.split("/").last().expect("Split to work properly");
+            let install_file = format!("{}{}", install_folder, filename);
+            let mut out = File::create(&install_file).expect("Create file");
+
+            println!("Downloading...");
+            let bytes_res = dl_resp.bytes().expect("Get body right");
+            println!("Copying data...");
+            let write_res = out.write_all(&bytes_res);
+            if write_res.is_err() {
+                println!("Error saving data: '{}'",write_res.unwrap_err());
+                return;
+            }
+            // Now unpack
+            println!("Creating new XzDecoder");
+            let tar_xz = File::open(&install_file).expect("Opens right");
+            let tar_xz_buffer = BufReader::new(tar_xz);
+            let tar = XzDecoder::new(tar_xz_buffer);
+            println!("Creating new Archive");
+            let mut archive = Archive::new(tar);
+            let unpack_res = archive.unpack(install_folder);
+            if unpack_res.is_err() {
+                println!("Error unpacking: {}",unpack_res.unwrap_err());
+            } else {
+                println!("Unpacked successfully");
+            }
         },
         Commands::Available(_available_args) => {
             let versions = get_major_versions();
