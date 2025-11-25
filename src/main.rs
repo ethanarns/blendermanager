@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand};
-use tokio;
 
 const RELEASE_LIST_URL: &str = "https://download.blender.org/release/";
+const SYSTEM_EXT: &str = "linux-x64.tar.xz";
 
 #[derive(Parser)]
 #[command(version = "0.1.0")]
@@ -68,7 +68,7 @@ async fn get_major_versions() -> Result<Vec<String>,Box<dyn std::error::Error>> 
 async fn get_minor_version_releases(major_version: &str) -> Result<Vec<String>,Box<dyn std::error::Error>> {
     let mut end_url = major_version.to_owned();
     if !end_url.ends_with("/") {
-        end_url.push_str("/");
+        end_url.push('/');
     }
     let releases_url = RELEASE_LIST_URL.to_owned() + major_version;
     let client = reqwest::Client::new();
@@ -81,6 +81,22 @@ async fn get_minor_version_releases(major_version: &str) -> Result<Vec<String>,B
     let releases: Vec<String> = document.select(&scraper::Selector::parse("a")?).map(|x| x.text().collect()).collect();
     let releases_filtered: Vec<String> = releases.into_iter().filter(|x| x.starts_with("blender")).collect();
     Ok(releases_filtered)
+}
+
+async fn get_latest_release_url(major_version: &str) -> Result<String,Box<dyn std::error::Error>> {
+    let releases = get_minor_version_releases(major_version).await?;
+    let releases: Vec<String> = releases.into_iter().filter(|x| x.contains(SYSTEM_EXT)).collect();
+    let last_release = releases.last();
+    if last_release.is_none() {
+        return Ok("Shit, not found".to_string());
+    }
+    let mut ret = "https://download.blender.org/release/".to_owned();
+    ret.push_str(major_version);
+    if !ret.ends_with("/") {
+        ret.push('/');
+    }
+    ret.push_str(last_release.unwrap());
+    Ok(ret)
 }
 
 #[tokio::main]
@@ -112,6 +128,14 @@ async fn main() {
             for release in releases {
                 println!("Release: {}",release);
             }
+
+            let latest_release = get_latest_release_url("Blender4.5").await;
+            if latest_release.is_err() {
+                println!("Error: {:?}",latest_release.err());
+                return;
+            }
+            let latest_release = latest_release.unwrap();
+            println!("Latest: {}",latest_release);
         },
         Commands::Remove(_remove_args) => {
 
